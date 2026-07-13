@@ -25,14 +25,16 @@ Every 30 minutes **during US equity market hours**, it:
    - the **recommendation log** (`recommendations-log.md`) — what we've already
      seen/acted on, and
    - the **current paper portfolio** (open positions).
-5. If there is a **new BUY** (purchases only — sales are ignored) that we have
-   not already logged or already hold, AND deployed capital is `< 80%` of
-   equity, it:
+5. For **each new BUY** (purchases only — sales are ignored) that we have not
+   already logged or already hold, processed **most-recent-first while deployed
+   capital is `< 80%` of equity**, it:
    - calculates a position size from the current balance and the configured
      risk level,
    - **auto-places the paper order itself** (no approval step),
    - **posts a confirmation** with the 6 points below + the fill into chat, and
    - appends the trade to the log with status `PLACED`.
+   It keeps placing new buys this way until it runs out of new signals or the
+   80% deployment cap is reached.
 6. **Autonomous (paper only).** The routine executes the order without waiting
    for approval. If deployed capital is already `≥ 80%` of equity, it does NOT
    open a new position (logs `SKIPPED — deployment cap`). It never touches live
@@ -56,8 +58,8 @@ Every 30 minutes **during US equity market hours**, it:
 | Signal types acted on | **BUY / purchase only** (sales are logged but not traded) |
 | Recency window | Only act on buys **disclosed (`Filed`) within the last ~14 days** |
 | Auto-place? | **YES — autonomous (paper only).** The routine places the paper order itself; no approval tap required. |
-| Per-run limit | Auto-place **at most one** new buy per run (most recent tradeable); others recorded for later runs |
-| Total-deployment cap | Do **not** open a new position if deployed capital is already **≥ 80% of equity** (keep a ~20% cash buffer). Reaches ~8 positions, then pauses. |
+| Per-run limit | Auto-place **all** new tradeable buys each run (most-recent first), one after another, **until the deployment cap is hit** |
+| Total-deployment cap | Do **not** open a new position if deployed capital is already **≥ 80% of equity** (keep a ~20% cash buffer). This is the binding limit — ~8 positions, then it pauses. |
 
 ---
 
@@ -188,7 +190,8 @@ No approval is requested — this is autonomous paper trading.
   the start of every run; if it isn't, enable it before doing anything else.
   Autonomous execution is authorized **only** while paper mode is ON — if paper
   mode is somehow off and can't be re-enabled, do NOT place anything.
-- Respect the **80% deployment cap** and **one auto-trade per run**.
+- Respect the **80% deployment cap** — it is the binding limit on how much gets
+  deployed per run and overall. Place new buys most-recent-first until the cap.
 - Only act **during market hours** (the schedule enforces this, but re-check the
   clock — skip if it's a US market holiday).
 - Ignore **sales**; this routine only mirrors buys.
@@ -206,8 +209,8 @@ widened for DST and the routine self-gates on the real America/New_York clock.
 
 | Routine | ID | Cron (UTC) | Fires |
 |---|---|---|---|
-| Congress Buys (paper, auto) — top of hour | `trig_014GuMAosJLTvQSGt28qRiDu` | `0 13-21 * * 1-5` | :00 each hour |
-| Congress Buys (paper, auto) — half past | `trig_01J9VewFoLvZ3htt62qE1pMS` | `30 12-20 * * 1-5` | :30 each hour |
+| Congress Buys (paper, auto) — top of hour | `trig_01CrqatsJExwhswuXyi6N1bT` | `0 13-21 * * 1-5` | :00 each hour |
+| Congress Buys (paper, auto) — half past | `trig_011P5f5eRQpk93RBmXbZwEgZ` | `30 12-20 * * 1-5` | :30 each hour |
 
 Together they fire every 30 minutes across US market hours, Mon–Fri. Firings
 outside the real 09:30–16:00 ET window are skipped by the routine's own
@@ -233,13 +236,14 @@ trading/congress-buys-routine.md.
    ReportDate within ~14 days) and check tradeability on Liquid (search_markets).
 5. If nothing new/tradeable: stop quietly. If a new buy is NOT on Liquid: log it
    NOT TRADEABLE and post a brief note, then stop.
-6. If there is a new tradeable buy: pick the single most recent, check the 80%
-   deployment cap (deployed = equity − available_balance; skip + log if the new
-   position would exceed 80%). Otherwise compute the Aggressive size (~10% of
-   equity, 1x, 12% cap), get its price (analyze_market), and **place the paper
-   market buy directly** (fall back to suggest_trade only if direct execution is
-   rejected). Post the 6-point confirmation with the fill, append the trade to
-   the log as PLACED, add its key to seen-congress-buys.json, and STOP. No
+6. For each new tradeable buy, most-recent-first: re-check the 80% deployment
+   cap (deployed = equity − available_balance; stop the loop once a new ~10%
+   position would exceed 80%). While under the cap, compute the Aggressive size
+   (~10% of equity, 1x, 12% cap), get its price (analyze_market), and **place
+   the paper market buy directly** (fall back to suggest_trade only if direct
+   execution is rejected). Post a 6-point confirmation with the fill, append the
+   trade to the log as PLACED, and add its key to seen-congress-buys.json.
+   Repeat for the next new buy until signals run out or the cap is hit. No
    approval step.
 7. When a recommendation, placement, or status change occurs, commit and push
    trading/recommendations-log.md to branch
