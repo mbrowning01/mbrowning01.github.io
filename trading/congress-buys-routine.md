@@ -2,7 +2,7 @@
 
 **Owner:** mike.browning@gmail.com
 **Account:** Liquid.trade **PAPER** account (simulated funds only — never live)
-**Created:** 2026-07-10
+**Created:** 2026-07-10 · **Updated:** 2026-07-13 (switched to QuiverQuant bulk API; removed Tim Moore restriction)
 **Status:** Active
 
 This file is the single source of truth for the scheduled routine that mirrors
@@ -16,32 +16,25 @@ trigger runs the "Execution prompt" at the bottom of this file.
 Every 30 minutes **during US equity market hours**, it:
 
 1. Confirms the Liquid account is in **paper mode**.
-2. Pulls the latest **Congress Buys** trades from the QuiverQuant "Congress
-   Buys" strategy, **prioritizing** trader **Tim Moore** (R-NC, House;
-   QuiverQuant/CapitolTrades ID `M001236`) but not limited to him. Moore's own
-   picks skew to small/mid-cap names that are often **not listed on Liquid**, so
-   monitoring the broader Congress Buys strategy is what surfaces the large-cap
-   buys that are actually executable on the paper account. Tim Moore signals are
-   always flagged first when present.
+2. Pulls the latest **Congress Buys** across **all members of Congress** from the
+   QuiverQuant bulk API (see §3). No single trader is prioritized.
 3. **Checks each candidate buy is tradeable on Liquid** (`search_markets`).
-   Congressional buys in tickers not listed on Liquid are logged and surfaced to
-   the user as "signal — not tradeable on Liquid", but no order is proposed.
-4. Compares any newly disclosed **tradeable** trades against:
+   Buys in tickers not listed on Liquid are logged and surfaced as
+   "signal — not tradeable on Liquid", but no order is proposed.
+4. Compares any newly disclosed **tradeable buys** against:
    - the **recommendation log** (`recommendations-log.md`) — what we've already
      seen/acted on, and
    - the **current paper portfolio** (open positions).
-4. If there is a **new BUY** (purchases only — sales are ignored) that we have
+5. If there is a **new BUY** (purchases only — sales are ignored) that we have
    not already logged or already hold, it:
    - calculates a position size from the current balance and the configured
      risk level,
    - builds a full recommendation summary (the 6 points below),
    - **posts the summary into the chat session and asks for approval**, and
    - appends the recommendation to the log with status `PENDING APPROVAL`.
-5. It **does NOT place the trade automatically.** A trade is only placed after
+6. It **does NOT place the trade automatically.** A trade is only placed after
    the user explicitly approves it in chat, at which point the log entry is
    updated to `PLACED` (or `SKIPPED` if declined).
-6. Every run appends a one-line heartbeat to the log, even when there is no new
-   signal, so there is a complete audit trail.
 
 ---
 
@@ -49,8 +42,8 @@ Every 30 minutes **during US equity market hours**, it:
 
 | Parameter | Value |
 |---|---|
-| Strategy | QuiverQuant **Congress Buys** |
-| Focus trader | **Tim Moore** (House R-NC), ID `M001236` |
+| Strategy | QuiverQuant **Congress Buys**, **all members** (no trader filter) |
+| Data source | QuiverQuant bulk API (§3) |
 | Cadence | Every 30 minutes |
 | Trading window | US market hours only: **Mon–Fri, 09:30–16:00 America/New_York** |
 | Account | Liquid.trade **paper** (simulated) |
@@ -59,29 +52,42 @@ Every 30 minutes **during US equity market hours**, it:
 | Leverage | **1x** (no leverage) by default for equity mirrors |
 | Per-position cap | Never size a single new position above **12%** of equity |
 | Signal types acted on | **BUY / purchase only** (sales are logged but not traded) |
+| Recency window | Only act on buys **disclosed (ReportDate) within the last ~14 days** |
 | Auto-place? | **No.** Human approval required in chat before any order. |
-
-> Risk level was chosen as **Aggressive** by the account owner. To change it,
-> edit this table and the sizing math in the execution prompt.
+| Per-run limit | Propose **at most one** recommendation per run (most recent tradeable new buy); others are logged for later runs |
 
 ---
 
-## 3. Data sources (in priority order)
+## 3. Data source — QuiverQuant bulk API
 
-The primary QuiverQuant table is JavaScript-rendered and not readable via a
-plain fetch. Use these server-rendered sources instead:
+**Endpoint:** `https://api.quiverquant.com/beta/bulk/congresstrading`
 
-1. **StockTaper** (primary, server-rendered, parseable):
-   `https://www.stocktaper.com/congress/timmoore`
-2. **QuiverQuant news feed** (for fresh disclosure alerts):
-   `https://www.quiverquant.com/news/` and per-politician page
-   `https://www.quiverquant.com/congresstrading/politician/Tim%20Moore-M001236`
-3. **CapitolTrades** (fallback): `https://www.capitoltrades.com/politicians/M001236`
-4. **MarketBeat / AltIndex / Unusual Whales** congressional trackers as
-   secondary confirmation.
+**Auth:** Bearer/Token header using the secret in the **`QUIVER_API_KEY`**
+environment variable (configured in the Claude Code environment settings — never
+committed to the repo). Use:
 
-Performance-vs-S&P data for the summary can come from the same trackers
-(QuiverQuant reports an "Excess Return" column and yearly performance).
+```
+curl -sS -H "Authorization: Token ${QUIVER_API_KEY}" \
+  https://api.quiverquant.com/beta/bulk/congresstrading
+```
+
+If the request returns 401/403, or `QUIVER_API_KEY` is unset, log a
+`DATA-ERROR` heartbeat and stop (do not fabricate signals). If `Token` auth is
+rejected, retry once with `Authorization: Bearer ${QUIVER_API_KEY}`.
+
+**Response:** a JSON array of trade objects. Expected fields (names may vary
+slightly; match case-insensitively and tolerate extras):
+
+- `Representative` / `Name` — member of Congress
+- `Ticker` — stock symbol
+- `Transaction` — `Purchase` (buy) or `Sale`/`Sell`
+- `TransactionDate` — date of the trade
+- `ReportDate` / `Filed` — disclosure date
+- `Range` / `Amount` — dollar range
+- `House` / `BioGuideID` — chamber / member id
+
+Parse the array, keep only `Transaction == Purchase`, and work from `ReportDate`
+(fall back to `TransactionDate`) for recency and dedup.
 
 ---
 
@@ -90,21 +96,27 @@ Performance-vs-S&P data for the summary can come from the same trackers
 A disclosed trade is a **new actionable buy** when ALL of these hold:
 
 - Transaction type is a **purchase/buy** (ignore `Sale`/`Sell`).
-- The `(ticker, transaction_date, amount_range)` tuple does **not** already
+- The `(ticker, transaction_date, representative)` tuple does **not** already
   appear in `recommendations-log.md`.
 - We do **not** already hold an open position in that ticker in the paper
   portfolio.
-- The disclosure is recent (filed within the last ~14 days) — older backfilled
-  rows are recorded to the log's "known trades" baseline but not re-recommended.
+- `ReportDate` is within the last **~14 days**.
 - **The ticker is tradeable on Liquid** (`search_markets` returns an exact
-  match). If it is a valid new buy but NOT on Liquid, log it and post a short
-  "signal — not tradeable on Liquid" note to chat, but do not size or propose an
-  order.
+  match). If it is a valid new buy but NOT on Liquid, log it as `NOT TRADEABLE`
+  and post a brief note, but do not size or propose an order.
 
-On the **first run**, seed the baseline from the current StockTaper table so we
-don't fire recommendations for months-old trades; only genuinely new filings
-after the baseline should trigger recommendations. (The baseline as of
-2026-07-10 is recorded at the bottom of `recommendations-log.md`.)
+**Baseline re-seed (first authenticated run after the 2026-07-13 source switch):**
+The old baseline in `recommendations-log.md` came from the Tim-Moore-only
+StockTaper feed and does NOT reflect the full-Congress bulk API. On the FIRST
+successful bulk-API fetch, **seed a new baseline**: record all purchases from the
+current fetch (last ~14 days) into the log's baseline as `SEEN` and do NOT fire
+recommendations that run. Only buys that appear in *subsequent* fetches (i.e.
+newly disclosed after the re-seed) are actionable. This prevents a flood of
+recommendations for the existing backlog.
+
+If multiple new tradeable buys appear in one run, propose only the **single most
+recent** (by ReportDate) and record the rest in the log so later runs can pick
+them up one at a time.
 
 ---
 
@@ -131,16 +143,16 @@ approval.
 When a new buy is found, post this to chat and log it:
 
 1. **Ticker** — symbol + company name.
-2. **Insider / strategy signal** — "Tim Moore (Congress Buys) purchased $X–$Y on
-   <date>, disclosed <filing date>."
-3. **Why the trade matters** — sector/thesis, size relative to his other trades,
-   any clustering (repeat buys), conviction read.
-4. **Performance vs S&P 500** — how this trader / the Congress Buys strategy has
-   done against SPX (e.g. 2025: Moore +52% vs S&P +16.6%), with a source.
+2. **Insider / strategy signal** — "<Representative> (Congress Buys) purchased
+   $X–$Y on <transaction date>, disclosed <report date>."
+3. **Why the trade matters** — sector/thesis, size, any clustering (multiple
+   members or repeat buys in the same name), conviction read.
+4. **Performance vs S&P 500** — how the Congress Buys strategy / that member has
+   done against SPX, with a source.
 5. **Suggested position size** — notional $ (~10% of equity) and approx shares,
    1x, and % of equity.
-6. **Exact order** — e.g. `PAPER BUY 23 T @ market, 1x, ~$1,000 notional` plus
-   any TP/SL if used.
+6. **Exact order** — e.g. `PAPER BUY 6 NVDA @ market, 1x, ~$1,000 notional`
+   plus any TP/SL if used.
 
 Then explicitly ask: **"Approve this paper trade? (approve / skip)"** and stop.
 Do not place the order until the user approves.
@@ -164,6 +176,7 @@ Do not place the order until the user approves.
 - Only act **during market hours** (the schedule enforces this, but re-check the
   clock — skip if it's a US market holiday).
 - Ignore **sales**; this routine only mirrors buys.
+- Never print or commit `QUIVER_API_KEY`.
 - Keep the log append-only; never rewrite history, only update status fields.
 
 ---
@@ -177,46 +190,38 @@ widened for DST and the routine self-gates on the real America/New_York clock.
 
 | Routine | ID | Cron (UTC) | Fires |
 |---|---|---|---|
-| Congress Buys (paper) — top of hour | `trig_011BhrwJp97sELuPGnYS5GVC` | `0 13-21 * * 1-5` | :00 each hour |
-| Congress Buys (paper) — half past | `trig_01K4tvawFp6wJQZsZ7846v7R` | `30 12-20 * * 1-5` | :30 each hour |
+| Congress Buys (paper) — top of hour | `trig_014xBFrK3oijua5EAMdUcPdL` | `0 13-21 * * 1-5` | :00 each hour |
+| Congress Buys (paper) — half past | `trig_01GW4gi2zw4UgZLe2t3Xs8zG` | `30 12-20 * * 1-5` | :30 each hour |
 
 Together they fire every 30 minutes across US market hours, Mon–Fri. Firings
 outside the real 09:30–16:00 ET window are skipped by the routine's own
-market-hours check (logged as heartbeats). To pause the routine, disable/delete
-both triggers.
+market-hours check. To pause the routine, disable/delete both triggers.
 
 ## 10. Execution prompt (what the scheduled trigger runs)
-
-> This is the exact instruction fired into the chat session every 30 minutes
-> during market hours. It is intentionally self-contained.
 
 ```
 Run the Congress Buys paper-trading routine defined in
 trading/congress-buys-routine.md.
 
-Steps:
-1. Confirm the current time is within US market hours (Mon–Fri 09:30–16:00
-   America/New_York) and it is not a market holiday. If not, append a
-   "skipped — outside market hours" heartbeat to
-   trading/recommendations-log.md and stop.
-2. Verify Liquid paper trading is ENABLED (enable it if not).
-3. Fetch the latest Congress Buys trades, prioritizing Tim Moore
-   (https://www.stocktaper.com/congress/timmoore) and scanning the broader
-   Congress Buys feed (fallbacks in the routine file). Parse ticker / buy-sell /
-   amount / dates.
-4. Load the baseline + prior entries from trading/recommendations-log.md and
-   the current paper portfolio (get_portfolio). Determine if there is a NEW
-   BUY per the detection logic (purchases only, not already logged, not already
-   held, filed within ~14 days). For each new buy, check tradeability on Liquid
-   with search_markets.
-5. If NO new buy: append a one-line heartbeat to the log and stop (no chat spam).
-   If there IS a new buy but the ticker is NOT on Liquid: log it and post a brief
-   "signal — not tradeable on Liquid" note, then stop.
-6. If there IS a new buy that IS tradeable on Liquid: get its current Liquid
-   price (analyze_market), compute the Aggressive size (~10% of equity, 1x, 12%
-   cap), and post the 6-point recommendation summary to chat, append it to the
-   log as PENDING APPROVAL, then ask "Approve this paper trade? (approve / skip)"
-   and STOP. Do not place the order.
-7. When I later approve, place the PAPER market buy at the stated size and
-   update the log entry to PLACED (or SKIPPED if I decline).
+1. Confirm it is currently US market hours (Mon–Fri 09:30–16:00
+   America/New_York) and not a holiday. If not, stop quietly (no chat message).
+2. Verify Liquid paper trading is ENABLED (enable if not).
+3. Fetch the latest Congress buys for ALL members from the QuiverQuant bulk API
+   at https://api.quiverquant.com/beta/bulk/congresstrading using the
+   QUIVER_API_KEY env var (Authorization: Token). Keep only purchases. If the
+   API errors or the key is missing, log a DATA-ERROR note and stop.
+4. Load the baseline + prior entries from trading/recommendations-log.md and the
+   current paper portfolio (get_portfolio). If no bulk-API baseline exists yet,
+   RE-SEED: record current recent purchases as the baseline and stop without
+   recommending. Otherwise find NEW buys (purchase, not already logged/held,
+   ReportDate within ~14 days) and check tradeability on Liquid (search_markets).
+5. If nothing new/tradeable: stop quietly. If a new buy is NOT on Liquid: log it
+   NOT TRADEABLE and post a brief note, then stop.
+6. If there is a new tradeable buy: pick the single most recent, get its price
+   (analyze_market), compute the Aggressive size (~10% of equity, 1x, 12% cap),
+   post the 6-point summary, append it to the log as PENDING APPROVAL, ask
+   "Approve this paper trade? (approve / skip)", and STOP. Do not place the order.
+7. When a recommendation, placement, or status change occurs, commit and push
+   trading/recommendations-log.md to branch
+   claude/liquid-paper-trading-routine-ml2ic5.
 ```

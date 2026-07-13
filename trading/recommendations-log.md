@@ -5,11 +5,28 @@ Append-only audit trail for the Congress Buys paper-trading routine
 for each recommendation, and a one-line heartbeat when there is no new signal.
 **Paper account only — simulated funds.**
 
-Status values: `PENDING APPROVAL` · `PLACED` · `SKIPPED` · `NOT TRADEABLE` · `HEARTBEAT`
+Status values: `PENDING APPROVAL` · `PLACED` · `SKIPPED` · `NOT TRADEABLE` · `HEARTBEAT` · `SEEN` · `DATA-ERROR`
 
 ---
 
-## Baseline (known trades as of 2026-07-10)
+## Data source change — 2026-07-13
+
+The routine now pulls **all members of Congress** from the QuiverQuant bulk API
+(`https://api.quiverquant.com/beta/bulk/congresstrading`, auth via
+`QUIVER_API_KEY`) instead of the Tim-Moore-only StockTaper feed. The
+Tim-Moore-only baseline below is **superseded**. On the first successful
+bulk-API fetch the routine will **re-seed a new baseline** (record current
+recent purchases as `SEEN`, no recommendations that run); only buys disclosed
+after that re-seed are actionable.
+
+### Bulk-API baseline (re-seed pending)
+
+_Not yet seeded — awaiting the first authenticated bulk-API run once
+`QUIVER_API_KEY` is set in the environment._
+
+---
+
+## Baseline (Tim-Moore-only, superseded 2026-07-13)
 
 These pre-existing disclosures are recorded so the routine does NOT re-recommend
 months-old trades. Only NEW filings after this baseline should trigger a
