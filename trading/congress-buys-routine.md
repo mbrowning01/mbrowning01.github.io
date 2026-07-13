@@ -26,15 +26,17 @@ Every 30 minutes **during US equity market hours**, it:
      seen/acted on, and
    - the **current paper portfolio** (open positions).
 5. If there is a **new BUY** (purchases only — sales are ignored) that we have
-   not already logged or already hold, it:
+   not already logged or already hold, AND deployed capital is `< 80%` of
+   equity, it:
    - calculates a position size from the current balance and the configured
      risk level,
-   - builds a full recommendation summary (the 6 points below),
-   - **posts the summary into the chat session and asks for approval**, and
-   - appends the recommendation to the log with status `PENDING APPROVAL`.
-6. It **does NOT place the trade automatically.** A trade is only placed after
-   the user explicitly approves it in chat, at which point the log entry is
-   updated to `PLACED` (or `SKIPPED` if declined).
+   - **auto-places the paper order itself** (no approval step),
+   - **posts a confirmation** with the 6 points below + the fill into chat, and
+   - appends the trade to the log with status `PLACED`.
+6. **Autonomous (paper only).** The routine executes the order without waiting
+   for approval. If deployed capital is already `≥ 80%` of equity, it does NOT
+   open a new position (logs `SKIPPED — deployment cap`). It never touches live
+   funds — paper mode is verified every run.
 
 ---
 
@@ -52,9 +54,10 @@ Every 30 minutes **during US equity market hours**, it:
 | Leverage | **1x** (no leverage) by default for equity mirrors |
 | Per-position cap | Never size a single new position above **12%** of equity |
 | Signal types acted on | **BUY / purchase only** (sales are logged but not traded) |
-| Recency window | Only act on buys **disclosed (ReportDate) within the last ~14 days** |
-| Auto-place? | **No.** Human approval required in chat before any order. |
-| Per-run limit | Propose **at most one** recommendation per run (most recent tradeable new buy); others are logged for later runs |
+| Recency window | Only act on buys **disclosed (`Filed`) within the last ~14 days** |
+| Auto-place? | **YES — autonomous (paper only).** The routine places the paper order itself; no approval tap required. |
+| Per-run limit | Auto-place **at most one** new buy per run (most recent tradeable); others recorded for later runs |
+| Total-deployment cap | Do **not** open a new position if deployed capital is already **≥ 80% of equity** (keep a ~20% cash buffer). Reaches ~8 positions, then pauses. |
 
 ---
 
@@ -147,33 +150,35 @@ approval.
 
 ---
 
-## 6. The recommendation summary (always these 6 points)
+## 6. Auto-execution + the confirmation summary (always these 6 points)
 
-When a new buy is found, post this to chat and log it:
+When a new tradeable buy is found and the deployment cap allows it, **place the
+paper order**, then post this to chat and log it as `PLACED`:
 
 1. **Ticker** — symbol + company name.
-2. **Insider / strategy signal** — "<Representative> (Congress Buys) purchased
-   $X–$Y on <transaction date>, disclosed <report date>."
+2. **Insider / strategy signal** — "<Name> (Congress Buys) purchased $X–$Y on
+   <Traded>, disclosed <Filed>."
 3. **Why the trade matters** — sector/thesis, size, any clustering (multiple
    members or repeat buys in the same name), conviction read.
 4. **Performance vs S&P 500** — how the Congress Buys strategy / that member has
    done against SPX, with a source.
-5. **Suggested position size** — notional $ (~10% of equity) and approx shares,
-   1x, and % of equity.
-6. **Exact order** — e.g. `PAPER BUY 6 NVDA @ market, 1x, ~$1,000 notional`
-   plus any TP/SL if used.
+5. **Position size** — notional $ (~10% of equity), approx shares, 1x, % of equity.
+6. **Order placed** — e.g. `PAPER BUY 6 NVDA @ market, 1x, ~$1,000 notional`,
+   plus the actual fill returned by Liquid.
 
-Then explicitly ask: **"Approve this paper trade? (approve / skip)"** and stop.
-Do not place the order until the user approves.
+No approval is requested — this is autonomous paper trading.
 
----
+## 7. Placing the order
 
-## 7. On approval
-
-- On **approve**: call the Liquid order tool to place the **paper** market buy
-  with the exact size, then update the log entry to `PLACED` with the fill.
-- On **skip/decline**: update the log entry to `SKIPPED` with the reason.
-- Either way, add the trade's tuple to the baseline so it isn't re-recommended.
+- Compute size (§5) and verify the deployment cap: proceed only if
+  `deployed_after ≤ 80% of equity`, where `deployed = equity − available_balance`.
+  Otherwise log `SKIPPED — deployment cap` and stop.
+- Place the **paper** market buy directly (execute the order tool with
+  `symbol`, `side=buy`, `size`=notional, `leverage=1`). If direct execution is
+  rejected by the platform, **fall back** to `suggest_trade` (renders a one-tap
+  Place button) and note in chat that a tap is needed.
+- On fill: update the log entry to `PLACED` with the fill price/size, and add the
+  trade key to `trading/seen-congress-buys.json` so it isn't re-traded.
 
 ---
 
@@ -181,7 +186,9 @@ Do not place the order until the user approves.
 
 - **Never** disable paper trading. Verify `paper_trading_status` is enabled at
   the start of every run; if it isn't, enable it before doing anything else.
-- **Never** auto-place a trade without explicit chat approval.
+  Autonomous execution is authorized **only** while paper mode is ON — if paper
+  mode is somehow off and can't be re-enabled, do NOT place anything.
+- Respect the **80% deployment cap** and **one auto-trade per run**.
 - Only act **during market hours** (the schedule enforces this, but re-check the
   clock — skip if it's a US market holiday).
 - Ignore **sales**; this routine only mirrors buys.
@@ -199,8 +206,8 @@ widened for DST and the routine self-gates on the real America/New_York clock.
 
 | Routine | ID | Cron (UTC) | Fires |
 |---|---|---|---|
-| Congress Buys (paper) — top of hour | `trig_014xBFrK3oijua5EAMdUcPdL` | `0 13-21 * * 1-5` | :00 each hour |
-| Congress Buys (paper) — half past | `trig_01GW4gi2zw4UgZLe2t3Xs8zG` | `30 12-20 * * 1-5` | :30 each hour |
+| Congress Buys (paper, auto) — top of hour | `trig_014GuMAosJLTvQSGt28qRiDu` | `0 13-21 * * 1-5` | :00 each hour |
+| Congress Buys (paper, auto) — half past | `trig_01J9VewFoLvZ3htt62qE1pMS` | `30 12-20 * * 1-5` | :30 each hour |
 
 Together they fire every 30 minutes across US market hours, Mon–Fri. Firings
 outside the real 09:30–16:00 ET window are skipped by the routine's own
@@ -226,10 +233,14 @@ trading/congress-buys-routine.md.
    ReportDate within ~14 days) and check tradeability on Liquid (search_markets).
 5. If nothing new/tradeable: stop quietly. If a new buy is NOT on Liquid: log it
    NOT TRADEABLE and post a brief note, then stop.
-6. If there is a new tradeable buy: pick the single most recent, get its price
-   (analyze_market), compute the Aggressive size (~10% of equity, 1x, 12% cap),
-   post the 6-point summary, append it to the log as PENDING APPROVAL, ask
-   "Approve this paper trade? (approve / skip)", and STOP. Do not place the order.
+6. If there is a new tradeable buy: pick the single most recent, check the 80%
+   deployment cap (deployed = equity − available_balance; skip + log if the new
+   position would exceed 80%). Otherwise compute the Aggressive size (~10% of
+   equity, 1x, 12% cap), get its price (analyze_market), and **place the paper
+   market buy directly** (fall back to suggest_trade only if direct execution is
+   rejected). Post the 6-point confirmation with the fill, append the trade to
+   the log as PLACED, add its key to seen-congress-buys.json, and STOP. No
+   approval step.
 7. When a recommendation, placement, or status change occurs, commit and push
    trading/recommendations-log.md to branch
    claude/liquid-paper-trading-routine-ml2ic5.
