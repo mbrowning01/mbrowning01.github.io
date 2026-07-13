@@ -35,6 +35,8 @@ recommendation. Tradeability checked against Liquid on 2026-07-10.
 
 ## Log entries (newest first)
 
+- `2026-07-13 08:35 ET` — `HEARTBEAT` — skipped, pre-market (before 09:30 ET open). No check performed.
+
 - `2026-07-12 16:39 ET` — `HEARTBEAT` — skipped, outside market hours (Sunday / weekend). No check performed.
 
 ### 2026-07-10 — First run / setup (manual dry run)
