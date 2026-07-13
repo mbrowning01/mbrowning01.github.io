@@ -86,21 +86,30 @@ slightly; match case-insensitively and tolerate extras):
 - `Range` / `Amount` — dollar range
 - `House` / `BioGuideID` — chamber / member id
 
-Parse the array, keep only `Transaction == Purchase`, and work from `ReportDate`
-(fall back to `TransactionDate`) for recency and dedup.
+Parse the array, keep only `Transaction == Purchase`, and use the actual field
+names returned by this endpoint: **`Ticker`, `Traded`** (transaction date),
+**`Filed`** (disclosure date), **`Transaction`, `Trade_Size_USD`, `Name`**
+(member), `Party`, `Chamber`, `excess_return`. Use **`Filed`** (fall back to
+`Traded`) for recency and the dedup key `Ticker|Traded|Name`. Note the feed is
+large (~53 MB / 110k+ rows); filter to recent purchases before doing per-ticker
+work.
 
 ---
 
 ## 4. "New buy" detection logic
 
+The authoritative dedup store is **`trading/seen-congress-buys.json`** — a set of
+`"Ticker|Traded|Name"` keys already seen (plus a `seeded_at` date). Read it at
+the start of each run and add every purchase you process to it.
+
 A disclosed trade is a **new actionable buy** when ALL of these hold:
 
 - Transaction type is a **purchase/buy** (ignore `Sale`/`Sell`).
-- The `(ticker, transaction_date, representative)` tuple does **not** already
-  appear in `recommendations-log.md`.
+- The `Ticker|Traded|Name` key is **not** in `trading/seen-congress-buys.json`
+  (nor already recommended in `recommendations-log.md`).
 - We do **not** already hold an open position in that ticker in the paper
   portfolio.
-- `ReportDate` is within the last **~14 days**.
+- `Filed` (disclosure date) is within the last **~14 days**.
 - **The ticker is tradeable on Liquid** (`search_markets` returns an exact
   match). If it is a valid new buy but NOT on Liquid, log it as `NOT TRADEABLE`
   and post a brief note, but do not size or propose an order.

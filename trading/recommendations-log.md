@@ -19,10 +19,13 @@ bulk-API fetch the routine will **re-seed a new baseline** (record current
 recent purchases as `SEEN`, no recommendations that run); only buys disclosed
 after that re-seed are actionable.
 
-### Bulk-API baseline (re-seed pending)
+### Bulk-API baseline (seeded 2026-07-13 15:36 ET)
 
-_Not yet seeded — awaiting the first authenticated bulk-API run once
-`QUIVER_API_KEY` is set in the environment._
+Seeded from the first authenticated bulk-API fetch (114,245 records). The
+authoritative dedup set lives in **`trading/seen-congress-buys.json`** —
+**294 unique purchases** (211 tickers, 17 members) with `Filed` in the 14-day
+window ending 2026-07-13. These are all marked `SEEN`; only purchases disclosed
+**after** this seed are actionable. No recommendation fired on the seed run.
 
 ---
 
@@ -52,6 +55,7 @@ recommendation. Tradeability checked against Liquid on 2026-07-10.
 
 ## Log entries (newest first)
 
+- `2026-07-13 15:36 ET` — `SEEN` (re-seed) — QuiverQuant bulk API live (HTTP 200, 114,245 records). Seeded baseline of 294 recent purchases (211 tickers, 17 members) into `seen-congress-buys.json`. Paper equity $10,000, 0 positions. No recommendation on seed run; future runs act only on newly disclosed buys.
 - `2026-07-13 09:37 ET` — `HEARTBEAT` — market hours, checked. Paper equity $10,000, 0 positions. Tim Moore latest = DASH sale 2026-06-09 (already in baseline; sale, ignored). No new buy filed within ~14 days. No actionable signal.
 
 - `2026-07-13 09:05 ET` — `HEARTBEAT` — skipped, pre-market (before 09:30 ET open). No check performed.
