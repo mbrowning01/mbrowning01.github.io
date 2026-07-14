@@ -2,8 +2,9 @@
 "source": "quiverquant bulk congresstrading",
 "seeded_at": "2026-07-13",
 "window": "Filed>=2026-06-29 (14d)",
-"count": 294,
+"count": 295,
 "keys": [
+"3.MONTH, MATURE|2026-07-13|Rudy C. Yakym Iii",
 "AAPL|2026-06-05|Gilbert Cisneros",
 "ABBV|2026-06-02|Ro Khanna",
 "ABT|2026-06-02|Ro Khanna",
