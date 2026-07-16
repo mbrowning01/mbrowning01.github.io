@@ -19,3 +19,9 @@ github_username:  jekyll
 
 # Build settings
 markdown: kramdown
+
+# Exclude private/operational folders from the published GitHub Pages site.
+# The `trading/` folder holds paper-trading routine config and recommendation
+# logs. It is kept in the repo for versioning but is NOT published to the site.
+exclude:
+  - trading
