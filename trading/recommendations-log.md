@@ -55,6 +55,8 @@ recommendation. Tradeability checked against Liquid on 2026-07-10.
 
 ## Log entries (newest first)
 
+- `2026-07-16 09:33 ET` — `NOT TRADEABLE` — 8 new buys disclosed 2026-07-15, none on Liquid: ESAB (Kean, 2 lots), SPHR & HLT (Jackson), ZTS (Donalds), WPM, GIL, EQT (Kean). All mid-caps not in Liquid's universe. No orders; all 8 keys added to seen-set. Paper equity $10,000, 0 positions.
+
 - `2026-07-14 09:33 ET` — `NOT TRADEABLE` — 1 new disclosure since seed: Rudy Yakym (R) purchase of "3.MONTH, MATURE" ($15,001, filed 2026-07-13) — a 3-month Treasury/money-market holding, not a Liquid-listed equity. No trade; key added to seen-set. Paper equity $10,000, 0 positions.
 - `2026-07-13 15:36 ET` — `SEEN` (re-seed) — QuiverQuant bulk API live (HTTP 200, 114,245 records). Seeded baseline of 294 recent purchases (211 tickers, 17 members) into `seen-congress-buys.json`. Paper equity $10,000, 0 positions. No recommendation on seed run; future runs act only on newly disclosed buys.
 - `2026-07-13 09:37 ET` — `HEARTBEAT` — market hours, checked. Paper equity $10,000, 0 positions. Tim Moore latest = DASH sale 2026-06-09 (already in baseline; sale, ignored). No new buy filed within ~14 days. No actionable signal.
